@@ -1,12 +1,13 @@
+from .peer import Peer
 import random
 import networkx as nx
-from .peer import Peer
+import matplotlib.pyplot as plt
 
 class Network:
     def __init__(self, n, z0, z1):
         self.peers = []
         self.graph = nx.Graph()
-        self.link_params = {}  # Stores (ρ, c) for each edge
+        self.link_params = {}  # Stores (rho, c) for each edge
         all_ids = list(range(n))
         
         # Create slow/fast peers
@@ -22,34 +23,54 @@ class Network:
             self.peers.append(peer)
         
         # Set known peers for each node
-        all_peer_ids = [p.id for p in self.peers]
-        for peer in self.peers:
-            peer.known_peer_ids = [pid for pid in all_peer_ids if pid != peer.id]
+        # all_peer_ids = [p.peer_id for p in self.peers]
+        # for peer in self.peers:
+        #     peer.known_peer_ids = [pid for pid in all_peer_ids if pid != peer.peer_id]
         
         # Generate connected topology
-        while True:
-            self._create_random_topology()
-            if nx.is_connected(self.graph):
-                break
+        while True: 
+            self.create_random_topology()  # Create random topology
+
+            if nx.is_connected(self.graph):  # Ensure the graph is connected
+                self.save_graph_as_png()  # Save the graph as a PNG image
+                break  # Break the loop if the topology is valid
     
-    def _create_random_topology(self):
+    def create_random_topology(self):
         self.graph.clear()
         self.graph.add_nodes_from(range(len(self.peers)))
-        
+
         for peer in self.graph.nodes:
-            target_degree = random.randint(3,6)
+            # Target degree for the peer is randomly chosen between 3 and 6
+            target_degree = random.randint(3, 6)
             current_degree = self.graph.degree(peer)
-            
+
             while current_degree < target_degree:
-                candidates = [n for n in self.graph.nodes 
-                            if n != peer and not self.graph.has_edge(peer, n)]
+                # Consider only candidates with degree <= 6 (to avoid over-connected nodes)
+                candidates = [n for n in self.graph.nodes if n != peer and not self.graph.has_edge(peer, n) and self.graph.degree(n) < 6]
+
+                # If no valid candidates exist (which shouldn't happen in a connected graph), break
                 if not candidates: break
+
+                # Choose a random candidate from the remaining valid nodes
                 neighbor = random.choice(candidates)
+
+                # Add the edge to the graph
                 self.graph.add_edge(peer, neighbor)
-                
+
+                # Update the current degree of the peer after adding the edge
+                current_degree = self.graph.degree(peer)
+
                 # Initialize link parameters
                 p1, p2 = self.peers[peer], self.peers[neighbor]
                 cij = 100e6 if (not p1.is_slow and not p2.is_slow) else 5e6  # 100/5 Mbps
-                ρij = random.uniform(0.01, 0.5)  # 10-500ms in seconds
-                self.link_params[(peer, neighbor)] = (ρij, cij)
-                self.link_params[(neighbor, peer)] = (ρij, cij)  # Undirected
+                rhoij = random.uniform(0.01, 0.5)  # 10-500ms in seconds
+                self.link_params[(peer, neighbor)] = (rhoij, cij)
+                self.link_params[(neighbor, peer)] = (rhoij, cij)  # Undirected
+
+    def save_graph_as_png(self):
+        # Save the graph as a PNG image
+        plt.figure(figsize=(8, 8))
+        nx.draw(self.graph, with_labels=True, node_size=500, node_color="skyblue", font_size=15, font_weight="bold")
+        plt.title("Network Topology")
+        plt.savefig("topology_graph.png")
+        plt.close()

@@ -12,13 +12,13 @@ def main():
     # args = parser.parse_args()
     
     # network = Network(args.n, args.z0, args.z1)
-    network = Network(100, 30, 20)
+    network = Network(15, 30, 20)
     print(f"Network diameter: {nx.diameter(network.graph)}")
     print(f"Average degree: {sum(dict(network.graph.degree()).values())/100}")
     # simulator = Simulator(network, args.Ttx)
     simulator = Simulator(network, 5)
-    simulator.initialize_events()
-    simulator.run()
+    # simulator.initialize_events()
+    # simulator.run()
 
 if __name__ == "__main__":
     main()

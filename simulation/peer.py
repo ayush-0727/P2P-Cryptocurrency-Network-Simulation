@@ -6,10 +6,10 @@ import random
 
 class Peer:
     def __init__(self, peer_id, is_slow, is_low_cpu):
-        self.id = peer_id
+        self.peer_id = peer_id
         self.is_slow = is_slow
         self.is_low_cpu = is_low_cpu
-        self.coins = 100  # Initial coin balance (assumed)
+        self.coins = 0  # Initial coin balance (assumed)
         self.known_peer_ids = []
         self.sent_transactions = defaultdict(set)  # {txn_id: set(peer_ids)}
         self.block_tree = {
@@ -43,13 +43,13 @@ class Peer:
     
     def calculate_latency(self, peer_id, msg_bits):
         link = (self.id, peer_id)
-        ρ, c = self.network.link_params[link]
+        rho, c = self.network.link_params[link]
         
         # Queuing delay calculation
         mean_d = (96_000)/c  # 96kbits/c bits-per-second = seconds
         d = random.expovariate(1/mean_d)
         
-        return ρ + (msg_bits/c) + d
+        return rho + (msg_bits/c) + d
     
     def receive_transaction(self, transaction, sender_id, current_time, event_queue):
         if transaction.txn_id not in self.received_txns:
