@@ -4,9 +4,14 @@ import networkx as nx
 import matplotlib.pyplot as plt
 
 class Network:
-    def calculate_hashing_powers(self):
+    def set_hashing_powers(self):
         total = sum(10 if p.is_high_cpu else 1 for p in self.peers)
-        return [10/total if p.is_high_cpu else 1/total for p in self.peers]
+        for p in self.peers:
+            p.hashing_power = 10/total if p.is_high_cpu else 1/total 
+    
+    def set_neighbors(self):
+        for p in self.peers:
+            p.neighbors = list(self.graph.neighbors(p.peer_id))
     
     def __init__(self, n, z0, z1):
         self.peers = []
@@ -23,11 +28,12 @@ class Network:
             peer = Peer(
                 peer_id=pid,
                 is_slow=pid in slow_ids,
-                is_low_cpu=pid in low_cpu_ids,
-                hashing_power=self.hashing_powers[pid]
+                is_low_cpu=pid in low_cpu_ids
             )
             self.peers.append(peer)
         
+        self.set_hashing_powers()
+
         # Set known peers for each node
         all_peer_ids = [p.peer_id for p in self.peers]
         for peer in self.peers:
@@ -39,6 +45,8 @@ class Network:
             if nx.is_connected(self.graph):  # Ensure the graph is connected
                 self.save_graph_as_png()  # Save the graph as a PNG image
                 break  # Break the loop if the topology is valid
+        
+        self.set_neighbors()
         
         
     

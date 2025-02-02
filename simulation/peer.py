@@ -5,12 +5,13 @@ from collections import defaultdict
 import random
 
 class Peer:
-    def __init__(self, peer_id, is_slow, is_low_cpu,hashing_power):
+    def __init__(self, peer_id, is_slow, is_low_cpu):
         self.peer_id = peer_id
         self.is_slow = is_slow
         self.is_low_cpu = is_low_cpu
         self.coins = 0  # Initial coin balance (assumed)
         self.known_peer_ids = []
+        self.neighbors = []
         self.sent_transactions = defaultdict(set)  # {txn_id: set(peer_ids)}
         self.block_tree = {
             Block.GENESIS.id: {
@@ -25,7 +26,7 @@ class Peer:
         self.pending_transactions = set()
         self.current_mining_event = None
         self.total_blocks_mined = 0
-        self.hashing_power = hashing_power
+        self.hashing_power = 0
     
     def generate_transaction_handler(self, Ttx):
         def handler(current_time, event_queue):
@@ -47,7 +48,7 @@ class Peer:
         return handler
     
     def calculate_latency(self, peer_id, msg_bits):
-        link = (self.id, peer_id)
+        link = (self.peer_id, peer_id)
         rho, c = self.network.link_params[link]
         
         # Queuing delay calculation
@@ -61,7 +62,7 @@ class Peer:
             self.received_txns.add(transaction.txn_id)
             
             # Forward to all connected peers except sender
-            neighbors = list(self.network.graph.neighbors(self.id))
+            neighbors = self.neighbors
             for neighbor in neighbors:
                 if neighbor != sender_id and \
                    neighbor not in self.sent_transactions[transaction.txn_id]:
@@ -131,7 +132,7 @@ class Peer:
         self.current_mining_event = None
     
     def broadcast_block(self,new_block,current_time,event_queue):
-        neighbors = list(self.network.graph.neighbors(self.id))
+        neighbors = self.neighbors
         for neighbor in neighbors:
             if neighbor != self.peer_id:
                 
