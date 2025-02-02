@@ -1,11 +1,11 @@
-from .transaction import Transaction
-from .event import Event
-from .block import Block
+from simulation.transaction import Transaction
+from simulation.event import Event
+from simulation.block import Block
 from collections import defaultdict
 import random
 
 class Peer:
-    def __init__(self, peer_id, is_slow, is_low_cpu):
+    def __init__(self, peer_id, is_slow, is_low_cpu,link_params):
         self.peer_id = peer_id
         self.is_slow = is_slow
         self.is_low_cpu = is_low_cpu
@@ -27,16 +27,18 @@ class Peer:
         self.current_mining_event = None
         self.total_blocks_mined = 0
         self.hashing_power = 0
+        self.link_params = link_params
+        self.peers = []
     
     def generate_transaction_handler(self, Ttx):
-        def handler(current_time, event_queue):
+        def handler(current_time, event_queue,event):
             if self.coins > 0:
                 amount = random.randint(1, self.coins)
                 recipient = random.choice(self.known_peer_ids)
-                transaction = Transaction(self.id, recipient, amount)
+                transaction = Transaction(self.peer_id, recipient, amount)
                 # Schedule receive of the current transaction
                 self.receive_transaction(transaction,self.peer_id,current_time,event_queue)
-                print(f"Time {current_time:.2f}: Peer {self.id} generated {transaction}")
+                print(f"Time {current_time:.2f}: Peer {self.peer_id} generated {transaction}")
             # Schedule next transaction
             delay = random.expovariate(1.0 / Ttx)
             event_queue.add_event(Event(
@@ -49,7 +51,7 @@ class Peer:
     
     def calculate_latency(self, peer_id, msg_bits):
         link = (self.peer_id, peer_id)
-        rho, c = self.network.link_params[link]
+        rho, c = self.link_params[link]
         
         # Queuing delay calculation
         mean_d = (96_000)/c  # 96kbits/c bits-per-second = seconds
@@ -74,7 +76,7 @@ class Peer:
                     # Schedule receive event
                     event_queue.add_event(Event(
                         timestamp=current_time + latency,
-                        callback=lambda t, q: self.network.peers[neighbor]
+                        callback=lambda t, q,e: self.peers[neighbor]
                             .receive_transaction(transaction, self.peer_id, t, q),
                         msg=transaction
                     ))
@@ -83,7 +85,7 @@ class Peer:
     # Mining logic
 
 
-    def schedule_mining(self, current_time, event_queue, I=600):
+    def schedule_mining(self, current_time, event_queue, I=5):
         if self.current_mining_event:
             return  # Already mining
         
@@ -92,16 +94,16 @@ class Peer:
 
         # Select transactions from pending pool
         max_txns = min(1023, len(self.pending_transactions))  # Max 1023 txns + coinbase
-        selected_txns = random.sample(self.pending_transactions, max_txns)
+        selected_txns = random.sample(sorted(self.pending_transactions), max_txns)
         
         # Create coinbase transaction
-        coinbase = Transaction(self.id, self.id, 50)
+        coinbase = Transaction(self.peer_id, self.peer_id, 50)
         
         # Create block
         new_block = Block(
             prev_id=self.longest_chain_tip,
             transactions=selected_txns + [coinbase],
-            miner_id=self.id
+            miner_id=self.peer_id
         )
         
         self.current_mining_event = Event(
@@ -143,7 +145,7 @@ class Peer:
                 # Schedule receive event
                 event_queue.add_event(Event(
                     timestamp=current_time + latency,
-                    callback=lambda t, q: self.network.peers[neighbor]
+                    callback=lambda t, q,e: self.peers[neighbor]
                         .receive_block(new_block, self.peer_id, t, q),
                     msg=new_block
                 ))

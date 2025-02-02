@@ -1,4 +1,5 @@
 from .event import EventQueue
+from .event import Event
 import os
 
 class Simulator:
@@ -9,10 +10,12 @@ class Simulator:
     
     def initialize_events(self):
         for peer in self.network.peers:
-            peer.generate_transaction_handler(self.Ttx)(0, self.event_queue)
+            event = Event(timestamp=0,
+                          callback=peer.generate_transaction_handler(self.Ttx))
+            self.event_queue.add_event(event)
             peer.schedule_mining(0,self.event_queue)
     
-    def run(self, max_time=100):
+    def run(self, max_time=10000):
         while (event := self.event_queue.next_event()) is not None:
             if event.timestamp > max_time:
                 break

@@ -5,9 +5,9 @@ import matplotlib.pyplot as plt
 
 class Network:
     def set_hashing_powers(self):
-        total = sum(10 if p.is_high_cpu else 1 for p in self.peers)
+        total = sum(10 if not p.is_low_cpu else 1 for p in self.peers)
         for p in self.peers:
-            p.hashing_power = 10/total if p.is_high_cpu else 1/total 
+            p.hashing_power = 10/total if not p.is_low_cpu else 1/total 
     
     def set_neighbors(self):
         for p in self.peers:
@@ -28,11 +28,17 @@ class Network:
             peer = Peer(
                 peer_id=pid,
                 is_slow=pid in slow_ids,
-                is_low_cpu=pid in low_cpu_ids
+                is_low_cpu=pid in low_cpu_ids,
+                link_params=self.link_params     
             )
             self.peers.append(peer)
+
+        # Fix link params later
         
         self.set_hashing_powers()
+
+        for p in self.peers:
+            p.peers = self.peers
 
         # Set known peers for each node
         all_peer_ids = [p.peer_id for p in self.peers]

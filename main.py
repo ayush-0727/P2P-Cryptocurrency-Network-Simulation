@@ -19,6 +19,8 @@ def main():
     simulator = Simulator(network, 5)
     simulator.initialize_events()
     simulator.run()
+    print("Simulation Complete")
+
 
 if __name__ == "__main__":
     main()
