@@ -1,5 +1,10 @@
 import heapq
 
+# GENERATE_TRANSACTION
+# RECEIVE_TRANSACTION
+# SCHEDULE_MINING
+# 
+
 class Event:
     def __init__(self, timestamp, callback, msg = None):
         self.timestamp = timestamp

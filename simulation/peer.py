@@ -5,7 +5,7 @@ from collections import defaultdict
 import random
 
 class Peer:
-    def __init__(self, peer_id, is_slow, is_low_cpu):
+    def __init__(self, peer_id, is_slow, is_low_cpu,hashing_power):
         self.peer_id = peer_id
         self.is_slow = is_slow
         self.is_low_cpu = is_low_cpu
@@ -25,6 +25,7 @@ class Peer:
         self.pending_transactions = set()
         self.current_mining_event = None
         self.total_blocks_mined = 0
+        self.hashing_power = hashing_power
     
     def generate_transaction_handler(self, Ttx):
         def handler(current_time, event_queue):
@@ -32,6 +33,8 @@ class Peer:
                 amount = random.randint(1, self.coins)
                 recipient = random.choice(self.known_peer_ids)
                 transaction = Transaction(self.id, recipient, amount)
+                # Schedule receive of the current transaction
+                self.receive_transaction(transaction,self.peer_id,current_time,event_queue)
                 print(f"Time {current_time:.2f}: Peer {self.id} generated {transaction}")
             # Schedule next transaction
             delay = random.expovariate(1.0 / Ttx)
@@ -39,6 +42,8 @@ class Peer:
                 current_time + delay,
                 self.generate_transaction_handler(Ttx)
             ))
+            
+
         return handler
     
     def calculate_latency(self, peer_id, msg_bits):
@@ -69,30 +74,21 @@ class Peer:
                     event_queue.add_event(Event(
                         timestamp=current_time + latency,
                         callback=lambda t, q: self.network.peers[neighbor]
-                            .receive_transaction(transaction, self.id, t, q),
+                            .receive_transaction(transaction, self.peer_id, t, q),
                         msg=transaction
                     ))
                     self.sent_transactions[transaction.txn_id].add(neighbor)
     
     # Mining logic
-    def calculate_hashing_power(self, all_peers):
-        total = sum(10 if p.is_high_cpu else 1 for p in all_peers)
-        return 10/total if self.is_high_cpu else 1/total
+
 
     def schedule_mining(self, current_time, event_queue, I=600):
         if self.current_mining_event:
             return  # Already mining
         
-        hk = self.calculate_hashing_power(self.network.peers)
+        hk = self.hashing_power
         Tk = random.expovariate(hk/I)
-        
-        self.current_mining_event = Event(
-            current_time + Tk,
-            self.mine_block_callback
-        )
-        event_queue.add_event(self.current_mining_event)
-        
-    def mine_block_callback(self, current_time, event_queue):
+
         # Select transactions from pending pool
         max_txns = min(1023, len(self.pending_transactions))  # Max 1023 txns + coinbase
         selected_txns = random.sample(self.pending_transactions, max_txns)
@@ -107,14 +103,58 @@ class Peer:
             miner_id=self.id
         )
         
-        if new_block.is_valid_size():
+        self.current_mining_event = Event(
+            current_time + Tk,
+            self.mine_block_callback,
+            msg={
+                "block":new_block,
+                "longest_chain_tip":self.longest_chain_tip
+            }
+        )
+        event_queue.add_event(self.current_mining_event)
+        
+    def mine_block_callback(self, current_time, event_queue,event):
+        new_block,longest_chain_tip = event.msg.values()
+        if new_block.is_valid_size() and self.longest_chain_tip==longest_chain_tip:
+            self.block_tree[new_block.id] = {
+            'block': new_block,
+            'parent': new_block.prev_id,
+            'children': [],
+            'arrival_time': current_time,
+            'depth': self.block_tree[new_block.prev_id]['depth'] + 1
+            }
+            self.block_tree[new_block.prev_id]['children'].append(new_block.id)
             self.broadcast_block(new_block, current_time, event_queue)
+            self.schedule_mining(current_time,event_queue)
             self.total_blocks_mined += 1
         
         self.current_mining_event = None
+    
+    def broadcast_block(self,new_block,current_time,event_queue):
+        neighbors = list(self.network.graph.neighbors(self.id))
+        for neighbor in neighbors:
+            if neighbor != self.peer_id:
+                
+                # Calculate latency
+                msg_bits = new_block.size * 8_000  # 1KB = 8000 bits
+                latency = self.calculate_latency(neighbor, msg_bits)
+                
+                # Schedule receive event
+                event_queue.add_event(Event(
+                    timestamp=current_time + latency,
+                    callback=lambda t, q: self.network.peers[neighbor]
+                        .receive_block(new_block, self.peer_id, t, q),
+                    msg=new_block
+                ))
+        
+    
+
         
     # Block validation and propagation
     def receive_block(self, block, sender_id, current_time, event_queue):
+        if block.id in self.block_tree:
+            return
+        
         # Store block in tree
         self.block_tree[block.id] = {
             'block': block,
@@ -132,7 +172,7 @@ class Peer:
                 self.schedule_mining(current_time, event_queue)
         
         # Propagate block
-        self.forward_block(block, sender_id, current_time, event_queue)
+        self.broadcast_block(block, current_time, event_queue)
         
     def validate_block(self, block):
         # Check transaction balances using longest chain

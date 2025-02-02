@@ -4,10 +4,15 @@ import networkx as nx
 import matplotlib.pyplot as plt
 
 class Network:
+    def calculate_hashing_powers(self):
+        total = sum(10 if p.is_high_cpu else 1 for p in self.peers)
+        return [10/total if p.is_high_cpu else 1/total for p in self.peers]
+    
     def __init__(self, n, z0, z1):
         self.peers = []
         self.graph = nx.Graph()
         self.link_params = {}  # Stores (rho, c) for each edge
+        
         all_ids = list(range(n))
         
         # Create slow/fast peers
@@ -18,15 +23,15 @@ class Network:
             peer = Peer(
                 peer_id=pid,
                 is_slow=pid in slow_ids,
-                is_low_cpu=pid in low_cpu_ids
+                is_low_cpu=pid in low_cpu_ids,
+                hashing_power=self.hashing_powers[pid]
             )
             self.peers.append(peer)
         
         # Set known peers for each node
-        # all_peer_ids = [p.peer_id for p in self.peers]
-        # for peer in self.peers:
-        #     peer.known_peer_ids = [pid for pid in all_peer_ids if pid != peer.peer_id]
-        
+        all_peer_ids = [p.peer_id for p in self.peers]
+        for peer in self.peers:
+            peer.known_peer_ids = [pid for pid in all_peer_ids if pid != peer.peer_id]
         # Generate connected topology
         while True: 
             self.create_random_topology()  # Create random topology
@@ -34,6 +39,8 @@ class Network:
             if nx.is_connected(self.graph):  # Ensure the graph is connected
                 self.save_graph_as_png()  # Save the graph as a PNG image
                 break  # Break the loop if the topology is valid
+        
+        
     
     def create_random_topology(self):
         self.graph.clear()
@@ -62,10 +69,10 @@ class Network:
 
                 # Initialize link parameters
                 p1, p2 = self.peers[peer], self.peers[neighbor]
-                cij = 100e6 if (not p1.is_slow and not p2.is_slow) else 5e6  # 100/5 Mbps
-                rhoij = random.uniform(0.01, 0.5)  # 10-500ms in seconds
+                cij = 100e6 if (not p1.is_slow and not p2.is_slow) else 5e6 
+                rhoij = random.uniform(0.01, 0.5)
                 self.link_params[(peer, neighbor)] = (rhoij, cij)
-                self.link_params[(neighbor, peer)] = (rhoij, cij)  # Undirected
+                self.link_params[(neighbor, peer)] = (rhoij, cij) 
 
     def save_graph_as_png(self):
         # Save the graph as a PNG image

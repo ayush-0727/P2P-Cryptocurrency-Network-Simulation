@@ -17,8 +17,8 @@ def main():
     print(f"Average degree: {sum(dict(network.graph.degree()).values())/100}")
     # simulator = Simulator(network, args.Ttx)
     simulator = Simulator(network, 5)
-    # simulator.initialize_events()
-    # simulator.run()
+    simulator.initialize_events()
+    simulator.run()
 
 if __name__ == "__main__":
     main()
