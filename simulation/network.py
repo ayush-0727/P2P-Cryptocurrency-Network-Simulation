@@ -13,7 +13,7 @@ class Network:
         for p in self.peers:
             p.neighbors = list(self.graph.neighbors(p.peer_id))
     
-    def __init__(self, n, z0, z1):
+    def __init__(self, n, z0, z1,I):
         self.peers = []
         self.graph = nx.Graph()
         self.link_params = {}  # Stores (rho, c) for each edge
@@ -29,7 +29,8 @@ class Network:
                 peer_id=pid,
                 is_slow=pid in slow_ids,
                 is_low_cpu=pid in low_cpu_ids,
-                link_params=self.link_params     
+                link_params=self.link_params  ,
+                I=I
             )
             self.peers.append(peer)
 

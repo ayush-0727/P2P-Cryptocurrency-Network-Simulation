@@ -3,6 +3,12 @@ import networkx as nx
 from simulation.network import Network
 from simulation.simulator import Simulator
 
+nodes = 50
+low_cpu = 0
+slow = 0
+I = 1
+max_time = 100000
+
 def main():
     # parser = argparse.ArgumentParser()
     # parser.add_argument('--n', type=int, required=True, help='Number of peers')
@@ -12,11 +18,11 @@ def main():
     # args = parser.parse_args()
     
     # network = Network(args.n, args.z0, args.z1)
-    network = Network(100, 0, 50)
+    network = Network(nodes,slow , low_cpu, I)
     print(f"Network diameter: {nx.diameter(network.graph)}")
     print(f"Average degree: {sum(dict(network.graph.degree()).values())/100}")
     # simulator = Simulator(network, args.Ttx)
-    simulator = Simulator(network, 5)
+    simulator = Simulator(network, 5, I, max_time)
     simulator.initialize_events()
     simulator.run()
     print("Simulation Complete")

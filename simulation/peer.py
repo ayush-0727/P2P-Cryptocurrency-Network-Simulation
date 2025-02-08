@@ -6,7 +6,7 @@ import copy
 import random
 
 class Peer:
-    def __init__(self, peer_id, is_slow, is_low_cpu, link_params):
+    def __init__(self,I,peer_id, is_slow, is_low_cpu, link_params):
         self.peer_id = peer_id
         self.is_slow = is_slow
         self.is_low_cpu = is_low_cpu
@@ -47,6 +47,8 @@ class Peer:
         
         self.link_params = link_params
         self.peers = []
+
+        self.I = I
     
     def schedule_transactions(self,event_queue,Ttx):
         event = Event(timestamp=0,
@@ -121,7 +123,7 @@ class Peer:
     # --------------------------------------------------------
     # Mining logic
     # --------------------------------------------------------
-    def schedule_mining(self, current_time, event_queue, I=600):
+    def schedule_mining(self, current_time, event_queue):
         if self.current_mining_event:
             return
         
@@ -151,7 +153,7 @@ class Peer:
         
 
         # Calculate Tk
-        mean_time = I / self.hashing_power
+        mean_time = self.I / self.hashing_power
         Tk = random.expovariate(1.0 / mean_time)
         
         self.current_mining_event = Event(
@@ -169,7 +171,6 @@ class Peer:
         self.current_mining_event = None
 
         if self.longest_chain_tip.id != mined_block.prev_id:
-            self.schedule_mining(current_time,event_queue)
             return
         
         # Add the node to the block tree
@@ -219,6 +220,11 @@ class Peer:
     def receive_block(self,current_time, event_queue,event):
         block = event.msg
         if block.id in self.block_tree:
+            return
+        
+        if self.current_mining_event and block.prev_id == self.longest_chain_tip.id:
+            self.current_mining_event = None
+            self.schedule_mining(current_time,event_queue)
             return
 
         if not self.validate_block(block):

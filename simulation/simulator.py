@@ -3,19 +3,21 @@ from .event import Event
 import os
 
 class Simulator:
-    def __init__(self, network, Ttx):
+    def __init__(self, network, Ttx,I, max_time):
         self.network = network
         self.Ttx = Ttx
+        self.I = I
+        self.max_time = max_time
         self.event_queue = EventQueue()
     
     def initialize_events(self):
         for peer in self.network.peers:
             # peer.schedule_transactions(self.event_queue,self.Ttx)
-            peer.schedule_mining(0,self.event_queue,I=1)
+            peer.schedule_mining(0,self.event_queue)
     
-    def run(self, max_time=1000000):
+    def run(self):
         while (event := self.event_queue.next_event()) is not None:
-            if event.timestamp > max_time:
+            if event.timestamp > self.max_time:
                 break
             event.callback(event.timestamp, self.event_queue,event)
         
