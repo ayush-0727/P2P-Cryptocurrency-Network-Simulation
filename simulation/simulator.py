@@ -10,9 +10,7 @@ class Simulator:
     
     def initialize_events(self):
         for peer in self.network.peers:
-            event = Event(timestamp=0,
-                          callback=peer.generate_transaction_handler(self.Ttx))
-            self.event_queue.add_event(event)
+            peer.schedule_transactions(self.event_queue,self.Ttx)
             peer.schedule_mining(0,self.event_queue)
     
     def run(self, max_time=10000):
@@ -20,7 +18,8 @@ class Simulator:
             if event.timestamp > max_time:
                 break
             event.callback(event.timestamp, self.event_queue,event)
-            self.save_blockchain_trees()
+        
+        self.save_blockchain_trees()
             
         
     def save_blockchain_trees(self):
