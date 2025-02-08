@@ -7,7 +7,7 @@ nodes = 50
 low_cpu = 0
 slow = 0
 I = 1
-max_time = 100000
+max_time = 1000
 
 def main():
     # parser = argparse.ArgumentParser()

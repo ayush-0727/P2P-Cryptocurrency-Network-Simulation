@@ -167,11 +167,11 @@ class Peer:
     
         
     def mine_block_callback(self, current_time, event_queue, event):
+        if event != self.current_mining_event:
+            return
+        
         mined_block = event.msg
         self.current_mining_event = None
-
-        if self.longest_chain_tip.id != mined_block.prev_id:
-            return
         
         # Add the node to the block tree
         parent_block = self.block_tree[mined_block.prev_id]
@@ -224,8 +224,6 @@ class Peer:
         
         if self.current_mining_event and block.prev_id == self.longest_chain_tip.id:
             self.current_mining_event = None
-            self.schedule_mining(current_time,event_queue)
-            return
 
         if not self.validate_block(block):
             return
