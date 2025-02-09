@@ -1,6 +1,5 @@
 import argparse
 import networkx as nx
-import time
 from simulation.network import Network
 from simulation.simulator import Simulator
 
@@ -11,8 +10,6 @@ I = 600
 max_time = 300000
 
 def main():
-    start_time = time.time()
-    
     # parser = argparse.ArgumentParser()
     # parser.add_argument('--n', type=int, required=True, help='Number of peers')
     # parser.add_argument('--z0', type=float, required=True, help='Percentage of slow nodes')
@@ -28,11 +25,7 @@ def main():
     simulator = Simulator(network, 5, I, max_time)
     simulator.initialize_events()
     simulator.run()
-    
-    end_time = time.time()
-    execution_time = end_time - start_time
     print("Simulation Complete")
-    print(f"Total Simulation Time: {execution_time:.2f} seconds")
     network.peers[0].export_included_transactions("peer0_transactions.txt")
 
 
