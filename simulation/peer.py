@@ -19,6 +19,7 @@ class Peer:
         self.sent_transactions = defaultdict(set)
 
         self.balances = defaultdict(int)
+        self.balance_cache = {}  # Cache computed balances for blocks
 
         genesis_blk = Block(
             prev_id=None,
@@ -37,13 +38,17 @@ class Peer:
                 'arrival_time': 0
             }
         }
-        self.orphaned_blks=[]
+        self.orphaned_blks={}
         self._longest_chain_tip = genesis_blk
 
         self.current_mining_event = None
         self.total_blocks_mined = 0
 
+        self.sent_blocks = defaultdict(set)
+        
         self.hashing_power = 0
+        
+        self.longest_chain_txns = set()  # Stores transaction IDs in the longest chain
         
         self.link_params = link_params
         self.peers = []
@@ -115,25 +120,27 @@ class Peer:
                         timestamp=current_time + latency,
                         callback=lambda t, q, e: self.peers[neighbor]
                             .receive_transaction(transaction, self.peer_id, t, q),
-                        msg=copy.copy(transaction)
+                        msg=transaction
                     ))
                     self.sent_transactions[transaction.txn_id].add(neighbor)
     
     def transaction_in_longest_chain(self, txn):
+        return txn.txn_id in self.longest_chain_txns # O(1) lookup
+    
         """
         Walks backwards from the current longest-chain tip to check whether
         a transaction with the same txn_id is already included.
         """
-        block_id = self.longest_chain_tip.id
-        while block_id and block_id != "GENESIS":
-            block = self.block_tree[block_id]['block']
-            # Check all transactions (both coinbase and regular, although coinbase
-            # transactions are generated locally) for a match.
-            for t in block.transactions:
-                if t.txn_id == txn.txn_id:
-                    return True
-            block_id = self.block_tree[block_id]['parent']
-        return False
+        # block_id = self.longest_chain_tip.id
+        # while block_id and block_id != "GENESIS":
+        #     block = self.block_tree[block_id]['block']
+        #     # Check all transactions (both coinbase and regular, although coinbase
+        #     # transactions are generated locally) for a match.
+        #     for t in block.transactions:
+        #         if t.txn_id == txn.txn_id:
+        #             return True
+        #     block_id = self.block_tree[block_id]['parent']
+        # return False
     
     # --------------------------------------------------------
     # Mining logic
@@ -224,6 +231,11 @@ class Peer:
         print(f"Block mined by peer {self.peer_id} at time {current_time}s")
         parent_block['children'].append(mined_block.id)
         
+        if mined_block.prev_id == self.longest_chain_tip.id:
+            self.extend_longest_chain(mined_block)
+        else:
+            self.update_longest_chain(mined_block.id)
+            
         # Update the longest tip
         self.longest_chain_tip = mined_block
         
@@ -241,8 +253,9 @@ class Peer:
     
     def broadcast_block(self, new_block, current_time, event_queue):
         for neighbor in self.neighbors:
-            if neighbor == self.peer_id:
-                continue
+            if new_block.id in self.sent_blocks[neighbor]:
+                continue  # Already sent, skip
+            
             msg_bits = new_block.size * 8
             latency = self.calculate_latency(neighbor, msg_bits)
             event_queue.add_event(Event(
@@ -250,6 +263,24 @@ class Peer:
                 callback=self.peers[neighbor].receive_block,
                 msg=copy.deepcopy(new_block)
             ))
+            self.sent_blocks[neighbor].add(new_block.id)
+    
+    def extend_longest_chain(self, new_block):
+         """Update longest chain transactions when extending with a new block."""
+         for tx in new_block.transactions:
+             self.longest_chain_txns.add(tx.txn_id)  # Add transactions from the new block
+
+    def update_longest_chain(self, new_tip_id):
+        """Recompute transactions in the longest chain after reorganization."""
+        self.longest_chain_txns.clear()  # Clear previous transactions
+        current_block_id = new_tip_id
+
+        while current_block_id and current_block_id != "GENESIS":
+            block = self.block_tree[current_block_id]['block']
+            for tx in block.transactions:
+                self.longest_chain_txns.add(tx.txn_id)  # Add transactions from the new longest chain
+            current_block_id = block.prev_id  # Move to the previous block
+
     
     def receive_block(self,current_time, event_queue,event):
         block = event.msg
@@ -265,7 +296,7 @@ class Peer:
         parent_id = block.prev_id
 
         if parent_id not in self.block_tree:
-            self.orphaned_blks.append(block)
+            self.orphaned_blks[block.id] = block  # Store in dict
             return
         
         # Insert the block to block tree
@@ -282,6 +313,11 @@ class Peer:
         parent_node['children'].append(block.id)
 
         if new_depth > self.block_tree[self.longest_chain_tip.id]['depth']:
+            if parent_id == self.longest_chain_tip.id:
+                self.extend_longest_chain(block)
+            else:
+                self.update_longest_chain(block.id)
+                
             self.longest_chain_tip = block
             for tx in block.transactions[1:]:
                 if tx in self.mempool:
@@ -318,21 +354,21 @@ class Peer:
         
     
     def calculate_balances_for_chain(self, tip_id):
-        # Alternatively, we  can cache the balances at a particular block id
+        if tip_id in self.balance_cache:
+            return self.balance_cache[tip_id]
+
         balances = defaultdict(int)
-        
-        # Walk backwards from tip to genesis:
         current_block_id = tip_id
+
         while current_block_id and current_block_id != "GENESIS":
             bobj = self.block_tree[current_block_id]['block']
             for tx in bobj.transactions:
-                if tx.sender_id == tx.recipient_id:
-                    balances[tx.sender_id] += tx.amount
-                else:
+                balances[tx.recipient_id] += tx.amount
+                if tx.sender_id != tx.recipient_id:
                     balances[tx.sender_id] -= tx.amount
-                    balances[tx.recipient_id] += tx.amount
             current_block_id = bobj.prev_id
 
+        self.balance_cache[tip_id] = balances  # Cache result
         return balances
     
 
