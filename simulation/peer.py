@@ -38,7 +38,7 @@ class Peer:
             }
         }
         self.orphaned_blks=[]
-        self.longest_chain_tip = genesis_blk
+        self._longest_chain_tip = genesis_blk
 
         self.current_mining_event = None
         self.total_blocks_mined = 0
@@ -49,6 +49,14 @@ class Peer:
         self.peers = []
 
         self.I = I
+    @property
+    def longest_chain_tip(self):
+        return self._longest_chain_tip
+
+    @longest_chain_tip.setter
+    def longest_chain_tip(self,value):
+        self._longest_chain_tip = value
+        self.balances = self.calculate_balances_for_chain(value.id)
     
     def schedule_transactions(self,event_queue,Ttx):
         event = Event(timestamp=0,
@@ -58,15 +66,8 @@ class Peer:
 
     # Periodically generate random transactions
     def generate_transaction_handler(self, Ttx):
-        """
-        Called by the simulator to generate a new transaction from this peer, 
-        at random intervals with mean Ttx.
-        """
         def handler(current_time, event_queue, event):
-            # We check how many coins this peer (the sender) has according 
-            # to the chain it knows. So re-calculate based on the longest chain:
-            balances = self.calculate_balances_for_chain(self.longest_chain_tip)
-            sender_balance = balances.get(self.peer_id, self.initial_coins)
+            sender_balance = self.balances.get(self.peer_id,0)
 
             if sender_balance > 0:
                 amount = random.randint(1, sender_balance)
@@ -75,7 +76,6 @@ class Peer:
                 ])
                 transaction = Transaction(self.peer_id, recipient, amount)
                 
-                # Immediately treat it as if we "received" our own new txn:
                 self.receive_transaction(transaction, self.peer_id, current_time, event_queue)
                 
                 print(f"Time {current_time:.2f}: Peer {self.peer_id} generated {transaction}")
@@ -97,28 +97,43 @@ class Peer:
         
         return rho + (msg_bits / c) + d
     
-    # Receive Transactions by adding the transaction into your own pool and propogating it to the neighbours
     def receive_transaction(self, transaction, sender_id, current_time, event_queue):
+        if self.transaction_in_longest_chain(transaction):
+            return
         if transaction.txn_id not in self.received_txns:
             self.received_txns.add(transaction.txn_id)
-            # Add to local mempool (pending) if not already in chain
-            # (Here we do not check in-chain duplicates in detail, but you could do so.)
-            self.pending_transactions.add(transaction)
+            self.mempool.add(transaction)
 
             # Forward to all connected peers except the one who sent it:
             for neighbor in self.neighbors:
                 if neighbor != sender_id and neighbor not in self.sent_transactions[transaction.txn_id]:
                     # Calculate latency
-                    msg_bits = transaction.size * 8000  # 1KB = 8000 bits
+                    msg_bits = transaction.size * 8
                     latency = self.calculate_latency(neighbor, msg_bits)
                     
                     event_queue.add_event(Event(
                         timestamp=current_time + latency,
                         callback=lambda t, q, e: self.peers[neighbor]
                             .receive_transaction(transaction, self.peer_id, t, q),
-                        msg=transaction
+                        msg=copy.copy(transaction)
                     ))
                     self.sent_transactions[transaction.txn_id].add(neighbor)
+    
+    def transaction_in_longest_chain(self, txn):
+        """
+        Walks backwards from the current longest-chain tip to check whether
+        a transaction with the same txn_id is already included.
+        """
+        block_id = self.longest_chain_tip.id
+        while block_id and block_id != "GENESIS":
+            block = self.block_tree[block_id]['block']
+            # Check all transactions (both coinbase and regular, although coinbase
+            # transactions are generated locally) for a match.
+            for t in block.transactions:
+                if t.txn_id == txn.txn_id:
+                    return True
+            block_id = self.block_tree[block_id]['parent']
+        return False
     
     # --------------------------------------------------------
     # Mining logic
@@ -144,11 +159,33 @@ class Peer:
         new_block.transactions.append(coinbase_tx)
 
         # Choose the maximum possible transactions from mempool that can fit in the block
-        for txn in self.mempool:
+        temp_balances = self.calculate_balances_for_chain(self.longest_chain_tip.id)
+        # Apply the coinbase reward.
+        temp_balances[self.peer_id] += 50
+
+        # Iterate over a copy of the mempool (so that modifications do not affect the iteration).
+        for txn in list(self.mempool):
+            # Do not include a transaction if it is already in the longest chain.
+            if self.transaction_in_longest_chain(txn):
+                continue
+
+            # Check that the transaction is valid under temp_balances.
+            # (If sender == recipient, we treat it like a coinbase‐type transaction.)
+            if txn.sender_id != txn.recipient_id:
+                if temp_balances[txn.sender_id] < txn.amount:
+                    continue  # Skip this transaction if insufficient funds.
+                # Simulate the effect of this transaction.
+                temp_balances[txn.sender_id] -= txn.amount
+                temp_balances[txn.recipient_id] += txn.amount
+            else:
+                # In a normal scenario only coinbase transactions have equal sender/recipient.
+                temp_balances[txn.sender_id] += txn.amount
+
+            # Tentatively add the transaction.
             new_block.transactions.append(txn)
             if not new_block.is_valid_size():
-                while not new_block.is_valid_size():
-                    new_block.transactions.pop()
+                # Block size limit reached: remove the last transaction and stop adding further txns.
+                new_block.transactions.pop()
                 break
         
 
@@ -194,9 +231,6 @@ class Peer:
         for tx in mined_block.transactions[1:]:
             if tx in self.mempool:
                 self.mempool.remove(tx)
-
-        # Update Balance
-        self.balances = self.calculate_balances_for_chain(self.longest_chain_tip.id)
         
         self.total_blocks_mined += 1
 
@@ -249,7 +283,6 @@ class Peer:
 
         if new_depth > self.block_tree[self.longest_chain_tip.id]['depth']:
             self.longest_chain_tip = block
-            self.balances = self.calculate_balances_for_chain(self.longest_chain_tip.id)
             for tx in block.transactions[1:]:
                 if tx in self.mempool:
                     self.mempool.remove(tx)
@@ -301,6 +334,29 @@ class Peer:
             current_block_id = bobj.prev_id
 
         return balances
+    
+
+    def export_included_transactions(self,file_name):
+        chain_blocks = []
+        current_block_id = self.longest_chain_tip.id
+        
+        # Traverse backwards until we reach the genesis block
+        while current_block_id and current_block_id != "GENESIS":
+            block = self.block_tree[current_block_id]['block']
+            chain_blocks.append(block)
+            current_block_id = self.block_tree[current_block_id]['parent']
+        
+        # Reverse the list to have blocks in chronological order
+        chain_blocks.reverse()
+        
+        # Write the transactions from each block to the file.
+        with open(file_name, "w") as outfile:
+            for block in chain_blocks:
+                outfile.write(f"Block ID: {block.id}, Miner: {block.miner_id}\n")
+                outfile.write("Transactions:\n")
+                for txn in block.transactions:
+                    outfile.write(f"    {str(txn)}\n")
+                outfile.write("\n")
     
 
 

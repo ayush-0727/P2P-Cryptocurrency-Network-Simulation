@@ -12,7 +12,7 @@ class Simulator:
     
     def initialize_events(self):
         for peer in self.network.peers:
-            # peer.schedule_transactions(self.event_queue,self.Ttx)
+            peer.schedule_transactions(self.event_queue,self.Ttx)
             peer.schedule_mining(0,self.event_queue)
     
     def run(self):

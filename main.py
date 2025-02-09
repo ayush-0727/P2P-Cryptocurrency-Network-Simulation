@@ -3,11 +3,11 @@ import networkx as nx
 from simulation.network import Network
 from simulation.simulator import Simulator
 
-nodes = 50
+nodes = 5
 low_cpu = 0
 slow = 0
-I = 1
-max_time = 1000
+I = 400
+max_time = 10000
 
 def main():
     # parser = argparse.ArgumentParser()
@@ -26,6 +26,7 @@ def main():
     simulator.initialize_events()
     simulator.run()
     print("Simulation Complete")
+    network.peers[0].export_included_transactions("peer0_transactions.txt")
 
 
 if __name__ == "__main__":
