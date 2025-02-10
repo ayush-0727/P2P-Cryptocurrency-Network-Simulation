@@ -166,7 +166,7 @@ class Peer:
         new_block.transactions.append(coinbase_tx)
 
         # Choose the maximum possible transactions from mempool that can fit in the block
-        temp_balances = self.calculate_balances_for_chain(self.longest_chain_tip.id)
+        temp_balances = self.balances.copy()
         # Apply the coinbase reward.
         temp_balances[self.peer_id] += 50
 
@@ -261,7 +261,7 @@ class Peer:
             event_queue.add_event(Event(
                 timestamp=current_time + latency,
                 callback=self.peers[neighbor].receive_block,
-                msg=copy.deepcopy(new_block)
+                msg=new_block
             ))
             self.sent_blocks[neighbor].add(new_block.id)
     
@@ -289,16 +289,17 @@ class Peer:
         
         if self.current_mining_event and block.prev_id == self.longest_chain_tip.id:
             self.current_mining_event = None
-
-        if not self.validate_block(block):
-            return
         
-        parent_id = block.prev_id
 
+        parent_id = block.prev_id
         if parent_id not in self.block_tree:
             self.orphaned_blks[block.id] = block  # Store in dict
             return
         
+
+        if not self.validate_block(block):
+            return
+
         # Insert the block to block tree
         parent_node = self.block_tree[parent_id]
         new_depth = parent_node['depth'] + 1
@@ -324,8 +325,26 @@ class Peer:
                     self.mempool.remove(tx)
             self.schedule_mining(current_time, event_queue)
         
+        self.process_orphan_blocks(current_time,event_queue)
 
         self.broadcast_block(block,current_time,event_queue)
+    
+    def process_orphan_blocks(self, current_time, event_queue):
+        # Convert dict keys to a list to avoid modification issues during iteration
+        orphaned_block_ids = list(self.orphaned_blks.keys())
+
+        for orphan_id in orphaned_block_ids:
+            orphan_block = self.orphaned_blks[orphan_id]
+            parent_id = orphan_block.prev_id
+
+            # If the parent is now available in the block tree, process it
+            if parent_id in self.block_tree:
+                del self.orphaned_blks[orphan_id]  # Remove from orphan list
+
+                # Recursively call receive_block to process the orphan block
+                event = type('', (), {})()  # Create a dummy event object
+                event.msg = orphan_block
+                self.receive_block(current_time, event_queue, event)
 
         
     
@@ -333,12 +352,8 @@ class Peer:
         # Validate the transactions of the block by executing them and checking if locally stored balances are not getting negative for some sender
         if not block.is_valid_size():
             return False
-        
-        parent_id = block.prev_id
-        if parent_id not in self.block_tree and block.id != "GENESIS":
-            return False
 
-        balances = self.calculate_balances_for_chain(parent_id)
+        balances = self.balances.copy()
         
         for tx in block.transactions:
             sender_bal = balances[tx.sender_id]
@@ -359,16 +374,24 @@ class Peer:
 
         balances = defaultdict(int)
         current_block_id = tip_id
+        chain_segment = []
 
         while current_block_id and current_block_id != "GENESIS":
-            bobj = self.block_tree[current_block_id]['block']
+            if current_block_id in self.balance_cache:
+                balances = self.balance_cache[current_block_id].copy()
+                break
+            chain_segment.append(current_block_id)
+            current_block_id = self.block_tree[current_block_id]['parent']
+
+        for block_id in reversed(chain_segment):
+            bobj = self.block_tree[block_id]['block']
             for tx in bobj.transactions:
                 balances[tx.recipient_id] += tx.amount
                 if tx.sender_id != tx.recipient_id:
                     balances[tx.sender_id] -= tx.amount
-            current_block_id = bobj.prev_id
 
-        self.balance_cache[tip_id] = balances  # Cache result
+            self.balance_cache[block_id] = balances.copy()
+        
         return balances
     
 
