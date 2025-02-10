@@ -7,8 +7,8 @@ from simulation.simulator import Simulator
 nodes = 50
 low_cpu = 20
 slow = 25
-I = 1
-max_time = 1000
+I = 600
+max_time = 300000
 
 def main():
     start_time = time.time()
