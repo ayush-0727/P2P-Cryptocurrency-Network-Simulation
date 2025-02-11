@@ -15,7 +15,7 @@ def main():
     start_time = time.time()
     
     parser = argparse.ArgumentParser()
-    parser.add_argument('--n', type=int, default=50, help='Number of peers')
+    parser.add_argument('--n', type=int, default=n, help='Number of peers')
     parser.add_argument('--z0', type=float, default=z0, help='Percentage of slow nodes')
     parser.add_argument('--z1', type=float, default=z1, help='Percentage of low CPU nodes')
     parser.add_argument('--Ttx', type=float, default=Ttx, help='Mean transaction interarrival time')
