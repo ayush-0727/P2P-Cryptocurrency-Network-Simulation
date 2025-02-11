@@ -39,7 +39,7 @@ class Peer:
             }
         }
         self.orphaned_blks={}
-        self._longest_chain_tip = genesis_blk
+        self.longest_chain_tip = genesis_blk
 
         self.current_mining_event = None
         self.total_blocks_mined = 0
@@ -54,14 +54,6 @@ class Peer:
         self.peers = []
 
         self.I = I
-    @property
-    def longest_chain_tip(self):
-        return self._longest_chain_tip
-
-    @longest_chain_tip.setter
-    def longest_chain_tip(self,value):
-        self._longest_chain_tip = value
-        self.balances = self.calculate_balances_for_chain(value.id)
     
     def schedule_transactions(self,event_queue,Ttx):
         event = Event(timestamp=0,
@@ -118,8 +110,7 @@ class Peer:
                     
                     event_queue.add_event(Event(
                         timestamp=current_time + latency,
-                        callback=lambda t, q, e: self.peers[neighbor]
-                            .receive_transaction(transaction, self.peer_id, t, q),
+                        callback=lambda t, q, e, nb=neighbor: self.peers[nb].receive_transaction(transaction, self.peer_id, t, q),
                         msg=transaction
                     ))
                     self.sent_transactions[transaction.txn_id].add(neighbor)
@@ -237,7 +228,7 @@ class Peer:
             self.update_longest_chain(mined_block.id)
             
         # Update the longest tip
-        self.longest_chain_tip = mined_block
+        self.update_canonical_chain(mined_block.id)
         
         # Remove those transactions from the mempool that have been included
         for tx in mined_block.transactions[1:]:
@@ -319,15 +310,93 @@ class Peer:
             else:
                 self.update_longest_chain(block.id)
                 
-            self.longest_chain_tip = block
+            self.update_canonical_chain(block.id)
             for tx in block.transactions[1:]:
                 if tx in self.mempool:
                     self.mempool.remove(tx)
             self.schedule_mining(current_time, event_queue)
+        else:
+            self.balance_cache[block.id] = self.calculate_balances_for_chain(block.id)
         
         self.process_orphan_blocks(current_time,event_queue)
 
         self.broadcast_block(block,current_time,event_queue)
+    
+    def find_common_ancestor(self, old_tip_id, new_tip_id):
+        old_chain = set()
+        current = old_tip_id
+        while current:
+            old_chain.add(current)
+            current = self.block_tree[current]['parent']
+        
+        current = new_tip_id
+        while current:
+            if current in old_chain:
+                return current
+            current = self.block_tree[current]['parent']
+        return None  # Fallback; should not happen if GENESIS is always common
+    
+    def invalidate_cache_from(self, fork_point_id):
+        keys_to_remove = []
+        for block_id in self.balance_cache:
+            # Walk back from each cached block until you hit GENESIS or the fork point.
+            current = block_id
+            while current and current != "GENESIS":
+                if current == fork_point_id:
+                    break
+                current = self.block_tree[current]['parent']
+            else:
+                # If we did not break (i.e. fork point was not found), mark it for removal.
+                keys_to_remove.append(block_id)
+        
+        for key in keys_to_remove:
+            del self.balance_cache[key]
+
+    def calculate_balances_for_chain_from(self, fork_point_id, tip_id):
+    # Start with the cached balance at the fork point, or compute from scratch
+        if fork_point_id in self.balance_cache:
+            balances = self.balance_cache[fork_point_id].copy()
+        else:
+            balances = defaultdict(int)
+            # Optionally: recompute from GENESIS up to the fork point if needed
+        
+        # Build the chain segment from fork point (exclusive) to tip (inclusive)
+        chain_segment = []
+        current = tip_id
+        while current and current != fork_point_id:
+            chain_segment.append(current)
+            current = self.block_tree[current]['parent']
+        chain_segment.reverse()  # Process from fork point forward
+        
+        for block_id in chain_segment:
+            block = self.block_tree[block_id]['block']
+            for tx in block.transactions:
+                balances[tx.recipient_id] += tx.amount
+                if tx.sender_id != tx.recipient_id:
+                    balances[tx.sender_id] -= tx.amount
+            # Cache the computed balance for this block
+            self.balance_cache[block_id] = balances.copy()
+        
+        return balances
+    
+    def update_canonical_chain(self, new_tip_id):
+        old_tip_id = self.longest_chain_tip.id
+        # Find common ancestor between the current tip and the new tip
+        fork_point = self.find_common_ancestor(old_tip_id, new_tip_id)
+        
+        # Recalculate the balances on the new canonical chain from the fork point
+        new_balances = self.calculate_balances_for_chain_from(fork_point, new_tip_id)
+        
+        # Update the canonical chain state
+        self.balances = new_balances
+        self.longest_chain_tip = self.block_tree[new_tip_id]['block']
+    
+    # Optionally, you may also need to adjust your mempool:
+    # For instance, reintroduce transactions that were in the old canonical chain but are not in the new one.
+
+
+
+
     
     def process_orphan_blocks(self, current_time, event_queue):
         # Convert dict keys to a list to avoid modification issues during iteration
@@ -353,7 +422,10 @@ class Peer:
         if not block.is_valid_size():
             return False
 
-        balances = self.balances.copy()
+        if block.prev_id == "GENESIS":
+            balances = defaultdict(int)
+        else:
+            balances = self.balance_cache[block.prev_id].copy()
         
         for tx in block.transactions:
             sender_bal = balances[tx.sender_id]
@@ -391,6 +463,7 @@ class Peer:
                     balances[tx.sender_id] -= tx.amount
 
             self.balance_cache[block_id] = balances.copy()
+
         
         return balances
     

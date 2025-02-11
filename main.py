@@ -8,7 +8,8 @@ nodes = 50
 low_cpu = 20
 slow = 25
 I = 600
-max_time = 300000
+max_time = 100000
+Ttx = 5
 
 def main():
     start_time = time.time()
@@ -25,7 +26,7 @@ def main():
     print(f"Network diameter: {nx.diameter(network.graph)}")
     print(f"Average degree: {sum(dict(network.graph.degree()).values())/100}")
     # simulator = Simulator(network, args.Ttx)
-    simulator = Simulator(network, 5, I, max_time)
+    simulator = Simulator(network, Ttx, I, max_time)
     simulator.initialize_events()
     simulator.run()
     

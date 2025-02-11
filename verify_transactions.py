@@ -111,5 +111,9 @@ if __name__ == '__main__':
     else:
         print("All transactions are consistent.")
     print("\nFinal balances:")
+    total_balance = 0
     for account, balance in final_balances.items():
+        total_balance+=balance
         print(f"  Account {account}: {balance} coins")
+
+    print(f"Total coins: {total_balance}")

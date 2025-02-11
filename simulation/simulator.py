@@ -92,7 +92,7 @@ class Simulator:
 
     def get_longest_chain_blocks(self):
         blocks_created_by_peer = defaultdict(int)
-        current_block = self.network.peers[0]._longest_chain_tip  # Start from longest chain tip
+        current_block = self.network.peers[0].longest_chain_tip  # Start from longest chain tip
 
         while current_block and current_block.miner_id != "GENESIS":
             miner_id = current_block.miner_id  # Get the miner ID
