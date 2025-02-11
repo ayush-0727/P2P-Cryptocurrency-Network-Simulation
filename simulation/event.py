@@ -1,20 +1,15 @@
 import heapq
 
-# GENERATE_TRANSACTION
-# RECEIVE_TRANSACTION
-# SCHEDULE_MINING
-# 
-
 class Event:
     def __init__(self, timestamp, callback, msg = None):
         self.timestamp = timestamp
-        self.callback = callback  # Signature: callback(current_time, event_queue)
-        self.msg = msg  # Store message details
+        self.callback = callback  # Signature: callback(current_time, event_queue, event)
+        self.msg = msg 
 
 class EventQueue:
     def __init__(self):
         self.events = []
-        self.counter = 0  # For stable sorting
+        self.counter = 0 
     
     def add_event(self, event):
         heapq.heappush(self.events, (event.timestamp, self.counter, event))

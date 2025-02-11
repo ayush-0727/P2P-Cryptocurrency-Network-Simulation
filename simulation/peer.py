@@ -6,10 +6,11 @@ import copy
 import random
 
 class Peer:
-    def __init__(self,I,peer_id, is_slow, is_low_cpu, link_params):
+    def __init__(self,is_low_cpu,is_slow,I,peer_id, link_params):
         self.peer_id = peer_id
-        self.is_slow = is_slow
         self.is_low_cpu = is_low_cpu
+        self.is_slow = is_slow  
+        self.I = I
         
         self.known_peer_ids = []
         self.neighbors = []
@@ -23,7 +24,6 @@ class Peer:
 
         genesis_blk = Block(
             prev_id=None,
-            prev_hash=None,
             transactions=[],
             miner_id="GENESIS"
         )
@@ -53,13 +53,23 @@ class Peer:
         self.link_params = link_params
         self.peers = []
 
-        self.I = I
+    def calculate_latency(self, peer_id, msg_bits):
+        link = (self.peer_id, peer_id)
+        rho, c = self.link_params[link]
+        
+        mean_d = 96000 / c
+        d = random.expovariate(1 / mean_d)
+        
+        return rho + (msg_bits / c) + d
     
+    # --------------------------------------------------------
+    # Transaction logic
+    # --------------------------------------------------------
+
     def schedule_transactions(self,event_queue,Ttx):
         event = Event(timestamp=0,
                     callback=self.generate_transaction_handler(Ttx))
         event_queue.add_event(event)
-
 
     # Periodically generate random transactions
     def generate_transaction_handler(self, Ttx):
@@ -73,11 +83,12 @@ class Peer:
                 ])
                 transaction = Transaction(self.peer_id, recipient, amount)
                 
-                self.receive_transaction(transaction, self.peer_id, current_time, event_queue)
+                event.msg = transaction
+                self.receive_transaction(current_time, event_queue, event)
                 
                 print(f"Time {current_time:.2f}: Peer {self.peer_id} generated {transaction}")
             
-            # Schedule the next transaction-generation event:
+            # Schedule the next transaction after a delay
             delay = random.expovariate(1.0 / Ttx)
             event_queue.add_event(Event(
                 current_time + delay,
@@ -85,18 +96,16 @@ class Peer:
             ))
         return handler
     
-    def calculate_latency(self, peer_id, msg_bits):
-        link = (self.peer_id, peer_id)
-        rho, c = self.link_params[link]
+    def receive_transaction(self, current_time, event_queue, event):
+        transaction = event.msg
+        sender_id = transaction.sender_id
+
+        if not transaction or not sender_id:
+            return
         
-        mean_d = 96000 / c
-        d = random.expovariate(1 / mean_d)
-        
-        return rho + (msg_bits / c) + d
-    
-    def receive_transaction(self, transaction, sender_id, current_time, event_queue):
         if self.transaction_in_longest_chain(transaction):
             return
+        
         if transaction.txn_id not in self.received_txns:
             self.received_txns.add(transaction.txn_id)
             self.mempool.add(transaction)
@@ -110,28 +119,10 @@ class Peer:
                     
                     event_queue.add_event(Event(
                         timestamp=current_time + latency,
-                        callback=lambda t, q, e, nb=neighbor: self.peers[nb].receive_transaction(transaction, self.peer_id, t, q),
+                        callback=self.peers[neighbor].receive_transaction,
                         msg=transaction
                     ))
                     self.sent_transactions[transaction.txn_id].add(neighbor)
-    
-    def transaction_in_longest_chain(self, txn):
-        return txn.txn_id in self.longest_chain_txns # O(1) lookup
-    
-        """
-        Walks backwards from the current longest-chain tip to check whether
-        a transaction with the same txn_id is already included.
-        """
-        # block_id = self.longest_chain_tip.id
-        # while block_id and block_id != "GENESIS":
-        #     block = self.block_tree[block_id]['block']
-        #     # Check all transactions (both coinbase and regular, although coinbase
-        #     # transactions are generated locally) for a match.
-        #     for t in block.transactions:
-        #         if t.txn_id == txn.txn_id:
-        #             return True
-        #     block_id = self.block_tree[block_id]['parent']
-        # return False
     
     # --------------------------------------------------------
     # Mining logic
@@ -143,7 +134,6 @@ class Peer:
         # Create the block
         new_block = Block(
         prev_id=self.longest_chain_tip.id,
-        prev_hash=None,
         transactions=[],
         miner_id=self.peer_id
         )
@@ -151,38 +141,30 @@ class Peer:
         coinbase_tx = Transaction(
             sender_id=self.peer_id,
             recipient_id=self.peer_id,
+            coinbase=True,
             amount=50
         )
 
         new_block.transactions.append(coinbase_tx)
 
-        # Choose the maximum possible transactions from mempool that can fit in the block
         temp_balances = self.balances.copy()
-        # Apply the coinbase reward.
         temp_balances[self.peer_id] += 50
 
-        # Iterate over a copy of the mempool (so that modifications do not affect the iteration).
         for txn in list(self.mempool):
-            # Do not include a transaction if it is already in the longest chain.
             if self.transaction_in_longest_chain(txn):
                 continue
 
-            # Check that the transaction is valid under temp_balances.
-            # (If sender == recipient, we treat it like a coinbase‐type transaction.)
-            if txn.sender_id != txn.recipient_id:
+            if txn.coinbase:
+                temp_balances[txn.sender_id] += txn.amount
+            else:
                 if temp_balances[txn.sender_id] < txn.amount:
-                    continue  # Skip this transaction if insufficient funds.
-                # Simulate the effect of this transaction.
+                    continue
                 temp_balances[txn.sender_id] -= txn.amount
                 temp_balances[txn.recipient_id] += txn.amount
-            else:
-                # In a normal scenario only coinbase transactions have equal sender/recipient.
-                temp_balances[txn.sender_id] += txn.amount
 
-            # Tentatively add the transaction.
             new_block.transactions.append(txn)
+
             if not new_block.is_valid_size():
-                # Block size limit reached: remove the last transaction and stop adding further txns.
                 new_block.transactions.pop()
                 break
         
@@ -198,7 +180,6 @@ class Peer:
         )
         # Schedule the event of mine_block_callback at current_time + Tk
         event_queue.add_event(self.current_mining_event)
-
     
         
     def mine_block_callback(self, current_time, event_queue, event):
@@ -256,40 +237,41 @@ class Peer:
             ))
             self.sent_blocks[neighbor].add(new_block.id)
     
+    
+    def transaction_in_longest_chain(self, txn):
+        return txn.txn_id in self.longest_chain_txns # O(1) lookup
+
     def extend_longest_chain(self, new_block):
-         """Update longest chain transactions when extending with a new block."""
          for tx in new_block.transactions:
-             self.longest_chain_txns.add(tx.txn_id)  # Add transactions from the new block
+             self.longest_chain_txns.add(tx.txn_id)
 
     def update_longest_chain(self, new_tip_id):
-        """Recompute transactions in the longest chain after reorganization."""
-        self.longest_chain_txns.clear()  # Clear previous transactions
+        self.longest_chain_txns.clear()  
         current_block_id = new_tip_id
 
         while current_block_id and current_block_id != "GENESIS":
             block = self.block_tree[current_block_id]['block']
             for tx in block.transactions:
-                self.longest_chain_txns.add(tx.txn_id)  # Add transactions from the new longest chain
-            current_block_id = block.prev_id  # Move to the previous block
+                self.longest_chain_txns.add(tx.txn_id)  
+            current_block_id = block.prev_id
 
     
     def receive_block(self,current_time, event_queue,event):
         block = event.msg
         if block.id in self.block_tree:
             return
-        
-        if self.current_mining_event and block.prev_id == self.longest_chain_tip.id:
-            self.current_mining_event = None
-        
 
         parent_id = block.prev_id
         if parent_id not in self.block_tree:
             self.orphaned_blks[block.id] = block  # Store in dict
             return
         
-
         if not self.validate_block(block):
             return
+        
+        if self.current_mining_event and block.prev_id == self.longest_chain_tip.id:
+            self.current_mining_event = None
+        
 
         # Insert the block to block tree
         parent_node = self.block_tree[parent_id]
@@ -314,6 +296,7 @@ class Peer:
             for tx in block.transactions[1:]:
                 if tx in self.mempool:
                     self.mempool.remove(tx)
+            
             self.schedule_mining(current_time, event_queue)
         else:
             self.balance_cache[block.id] = self.calculate_balances_for_chain(block.id)
@@ -334,91 +317,62 @@ class Peer:
             if current in old_chain:
                 return current
             current = self.block_tree[current]['parent']
-        return None  # Fallback; should not happen if GENESIS is always common
-    
-    def invalidate_cache_from(self, fork_point_id):
-        keys_to_remove = []
-        for block_id in self.balance_cache:
-            # Walk back from each cached block until you hit GENESIS or the fork point.
-            current = block_id
-            while current and current != "GENESIS":
-                if current == fork_point_id:
-                    break
-                current = self.block_tree[current]['parent']
-            else:
-                # If we did not break (i.e. fork point was not found), mark it for removal.
-                keys_to_remove.append(block_id)
-        
-        for key in keys_to_remove:
-            del self.balance_cache[key]
+        return None 
 
     def calculate_balances_for_chain_from(self, fork_point_id, tip_id):
-    # Start with the cached balance at the fork point, or compute from scratch
         if fork_point_id in self.balance_cache:
             balances = self.balance_cache[fork_point_id].copy()
         else:
             balances = defaultdict(int)
-            # Optionally: recompute from GENESIS up to the fork point if needed
         
-        # Build the chain segment from fork point (exclusive) to tip (inclusive)
         chain_segment = []
         current = tip_id
         while current and current != fork_point_id:
             chain_segment.append(current)
             current = self.block_tree[current]['parent']
-        chain_segment.reverse()  # Process from fork point forward
+        chain_segment.reverse() 
         
         for block_id in chain_segment:
             block = self.block_tree[block_id]['block']
             for tx in block.transactions:
-                balances[tx.recipient_id] += tx.amount
-                if tx.sender_id != tx.recipient_id:
+                if tx.coinbase:
+                    balances[tx.recipient_id] += tx.amount
+                else:
                     balances[tx.sender_id] -= tx.amount
-            # Cache the computed balance for this block
+                    balances[tx.recipient_id] += tx.amount
+
             self.balance_cache[block_id] = balances.copy()
         
         return balances
     
     def update_canonical_chain(self, new_tip_id):
         old_tip_id = self.longest_chain_tip.id
-        # Find common ancestor between the current tip and the new tip
+
         fork_point = self.find_common_ancestor(old_tip_id, new_tip_id)
         
-        # Recalculate the balances on the new canonical chain from the fork point
         new_balances = self.calculate_balances_for_chain_from(fork_point, new_tip_id)
         
-        # Update the canonical chain state
         self.balances = new_balances
         self.longest_chain_tip = self.block_tree[new_tip_id]['block']
-    
-    # Optionally, you may also need to adjust your mempool:
-    # For instance, reintroduce transactions that were in the old canonical chain but are not in the new one.
-
-
-
 
     
     def process_orphan_blocks(self, current_time, event_queue):
-        # Convert dict keys to a list to avoid modification issues during iteration
         orphaned_block_ids = list(self.orphaned_blks.keys())
 
         for orphan_id in orphaned_block_ids:
             orphan_block = self.orphaned_blks[orphan_id]
             parent_id = orphan_block.prev_id
 
-            # If the parent is now available in the block tree, process it
             if parent_id in self.block_tree:
-                del self.orphaned_blks[orphan_id]  # Remove from orphan list
+                del self.orphaned_blks[orphan_id] 
 
-                # Recursively call receive_block to process the orphan block
-                event = type('', (), {})()  # Create a dummy event object
+                event = type('', (), {})()
                 event.msg = orphan_block
                 self.receive_block(current_time, event_queue, event)
 
         
     
     def validate_block(self, block):
-        # Validate the transactions of the block by executing them and checking if locally stored balances are not getting negative for some sender
         if not block.is_valid_size():
             return False
 
@@ -491,21 +445,5 @@ class Peer:
                 outfile.write("\n")
     
 
-
-
-    # Think about efficienly keeping track of the balance of the longest chain
-
-
-    # Write a function to rollback the transactions of a chain in case the longest chain changes
-
-    # Write a function to validate a transaction
-        # Should not be included if it is already part of some block in the current longest chain
-        # Should not include transaction that is not valid according to current balance
-    
-    # Think of replacing id with hashes to make the block chain tamper proof
-
-    # It can happen that a child block is received before its parent block so keep track of such blocks as well
-
-    # What if the chain changes and the transaction gets removed from the block chain? The creator of the transaction should again broadcast that transaction as the miners might have deleted it from their mempool
 
 
